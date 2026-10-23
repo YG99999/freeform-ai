@@ -1,0 +1,24 @@
+name: Bug report
+description: Tell us which local flow failed.
+body:
+  - type: input
+    id: tool
+    attributes:
+      label: Tool and model
+      placeholder: e.g. Chat / SmolLM2 360M
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser, operating system, and hardware
+      placeholder: e.g. Chrome 140 / Windows 11 / Intel integrated graphics
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What happened?
+      description: Include steps and the displayed error. Do not include private files, prompts, tokens, or personal information.
+    validations:
+      required: true

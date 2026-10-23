@@ -1,0 +1,41 @@
+{
+  "name": "freeform-ai",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A friendly, open-source AI toolbox. Chat, documents, images, transcription and speech run locally in your browser.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "predev": "node scripts/prepare-runtime.mjs",
+    "prebuild": "node scripts/prepare-runtime.mjs && node scripts/notices.mjs",
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build && node scripts/check-dist.mjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/*.test.js",
+    "deploy": "npm run build && wrangler deploy",
+    "check:models": "node scripts/check-models.mjs"
+  },
+  "dependencies": {
+    "@fontsource/bricolage-grotesque": "5.2.8",
+    "@fontsource/dm-sans": "5.2.8",
+    "@huggingface/transformers": "4.3.1",
+    "@mlc-ai/web-llm": "0.2.86",
+    "dompurify": "3.4.17",
+    "flux-klein.js": "0.7.0",
+    "mammoth": "1.13.0",
+    "marked": "17.0.4",
+    "onnxruntime-web": "1.30.0",
+    "pdfjs-dist": "6.4.299",
+    "transformers-legacy": "npm:@huggingface/transformers@3.8.1"
+  },
+  "devDependencies": {
+    "vite": "8.3.5",
+    "wrangler": "4.152.0"
+  },
+  "overrides": {
+    "sharp": "0.35.5"
+  }
+}
