@@ -4,11 +4,11 @@ Tested October 23, 2026 in the actual Freeform browser UI on Windows with Intel 
 
 ## Decision
 
-Use Qwen3.5 2B (Balanced) as the WebGPU default for chat and documents. It followed the writing constraints, solved the arithmetic, and acknowledged the missing start time in these checks. Its approximate 1.1 GB download and 2.2–2.6 GB GPU memory requirement, plus overhead, are a meaningful tradeoff. Smaller options remain available for limited hardware, with explicit limitations in the chooser.
+Use Qwen3.5 2B (Balanced) as the WebGPU default for chat and documents. It followed the writing constraints and acknowledged the missing start time in these checks. It solved the arithmetic initially, then got the identical question wrong in a live-site repeat. Its reasoning remains unreliable. Its approximate 1.1 GB download and 2.2–2.6 GB GPU memory requirement, plus overhead, are a meaningful tradeoff. Smaller options remain available for limited hardware, with explicit limitations in the chooser.
 
 | Model | Two-sentence note | Arithmetic (correct: $15) | Missing start time |
 | --- | --- | --- | --- |
-| Qwen3.5 2B | Followed constraints | Correct; emitted raw math markup | Correctly said not stated |
+| Qwen3.5 2B | Followed constraints | Initially $15; live repeat incorrectly gave 21 | Correctly said not stated |
 | Qwen3.5 0.8B | Only one sentence | Incorrect: $99 | Invented 6:00 PM |
 | SmolLM2 360M, corrected prompt format | Echoed instructions | Incorrect: 27 | Invented 12:00 PM |
 | SmolLM2 135M, CPU | Too long; invented plans | Incorrect: $21 | Invented 7:05 p.m. |
@@ -19,7 +19,7 @@ The CPU fallback is especially limited. Successful local inference does not impl
 
 GPU models used the pinned catalog revisions with q4f16 weights, temperature 0.65, and a 650-token output cap. The CPU model used q8 WASM, temperature 0.65, a 420-token cap, and repetition penalty 1.1. Runtime, memory, and network differences were not controlled; no timing comparison is reported.
 
-The application system message requests concise answers, honesty about uncertainty, and no claims of external actions. The first Qwen 2B arithmetic output exposed raw LaTeX. A plain-text arithmetic instruction was subsequently added; the samples below retain the original output, and that formatting improvement has not been separately measured here.
+The application system message requests concise answers, honesty about uncertainty, and no claims of external actions. The first Qwen 2B arithmetic output exposed raw LaTeX. A plain-text arithmetic instruction was subsequently added. The live-site repeat used that final instruction and produced readable arithmetic with an incorrect result: `30 - (3*4 + 3) = 21`. This second sample must be considered alongside the initial correct answer; formatting and factual correctness are separate concerns. This check cannot establish whether the system-message change caused the error.
 
 An investigation found that the Qwen-only WebLLM option to disable thinking inserted Qwen prompt markers into SmolLM2 too. The option now applies only to Qwen models. SmolLM2 360M was retested after that correction; the table and samples use the corrected run. Its output still failed these checks. Sampling is nondeterministic and the system-message change means this is an informal product check rather than a controlled model comparison.
 
