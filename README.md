@@ -14,7 +14,7 @@ Free, open-source AI chat, document questions, images, transcription, speech, an
 
 ![Freeform's friendly local AI workspace](docs/images/freeform-desktop.png)
 
-[Phone layout](docs/images/freeform-mobile.png) · [What was actually tested](docs/VALIDATION.md)
+[Phone layout](docs/images/freeform-mobile.png) · [What was actually tested](docs/VALIDATION.md) · [Text quality checks](docs/TEXT-QUALITY.md)
 
 ## What you can do
 

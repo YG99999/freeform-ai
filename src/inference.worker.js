@@ -73,7 +73,9 @@ self.onmessage = async ({ data: job }) => {
     if (job.task === 'chat' || job.task === 'documents') {
       if (!Array.isArray(job.messages) || job.messages.length > 40) throw new Error('Please start a new conversation.');
       if (model.runtime === 'mlc') {
-        const stream = await engine.chat.completions.create({ messages: job.messages, stream: true, temperature: 0.65, max_tokens: 650, extra_body: { enable_thinking: false } });
+        // WebLLM implements this Qwen option by inserting <think> prompt markers.
+        // Other families, including SmolLM2, must receive their normal template.
+        const stream = await engine.chat.completions.create({ messages: job.messages, stream: true, temperature: 0.65, max_tokens: 650, ...(model.id.startsWith('qwen-') ? { extra_body: { enable_thinking: false } } : {}) });
         let text = '';
         for await (const part of stream) {
           const token = part.choices[0]?.delta?.content || ''; text += token;

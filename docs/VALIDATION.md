@@ -33,10 +33,18 @@ Times include different cache/network states and are observations from this devi
 - A document question without a file showed a recoverable error before any model download.
 - Stop interrupted public-site generation, marked the partial reply, and restored enabled controls.
 - Downloads displayed 25 cached test files. Removing saved models changed the count to zero and displayed its completion message. Reported disk usage can lag cache removal.
-- Narrow phone layout was inspected visually: all six tools are visible, controls stack, and the model panel remains accessible. Desktop layout was also inspected. This is viewport testing, not a physical-phone inference test.
+- The refined phone layout was inspected at 350 × 844 and 350 × 480: a native selector exposes all six tools, the compact model chooser remains accessible, and the send action fits within the short viewport. Desktop layout uses a tool rail and one workspace. Desktop layout was also inspected. This is viewport testing, not a physical-phone inference test.
 - Cloudflare served HTTP 200 with CSP, COOP `same-origin`, COEP `credentialless`, no-referrer, and feature restrictions. GPU inference, CPU transcription, and PDF extraction worked on the public origin without browser console errors.
 - Canonical URL, Open Graph image, SoftwareApplication structured data, `robots.txt`, and sitemap are emitted. These make the site ready for indexing; they do not guarantee search placement.
 
 ## Remaining practical limits
 
 No physical iOS/Android, Safari, Firefox, low-memory Chromebook, or discrete high-memory GPU was available for validation. Free GPU memory cannot be measured reliably from a web page. Large downloads, browser eviction, model accuracy, supported codecs, drivers, thermal limits, and provider rate limits still apply. The app has no account, inference backend, cloud fallback, or offline installation service worker.
+
+## Frontend refinement and text quality pass
+
+The app now has a compact model chooser, an auto-growing chat input with Enter/Shift+Enter behavior, a conversation that preserves reading position during streaming, per-tool drafts/options, file previews and replacement, and browser Back navigation. Repeated marketing/explanatory copy was removed; download size and memory facts remain at model decisions.
+
+Browser checks exercised download cancellation with the draft retained, a real streamed GPU reply, real Whisper tiny transcription and result controls, PDF reading, invalid portrait-file replacement retaining the existing selection, image options restored after Back, and the 350 × 480 composer position (send action bottom: 447px; no horizontal or vertical page overflow). Device support, privacy, and source remain reachable from Help on phones.
+
+The quality pass found a Qwen-only prompt option being applied to SmolLM2; it is now restricted to Qwen. The small models still make substantial errors with corrected prompts. [Exact samples and interpretation](TEXT-QUALITY.md) document the recommendation of Qwen3.5 2B as the GPU default. This is a small manual check, not a benchmark or accuracy guarantee.

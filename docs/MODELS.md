@@ -23,7 +23,9 @@ SpeechT5 uses the separately pinned Transformers.js 3.8.1 runtime. Its older enc
 
 WebLLM's published configuration estimates approximately 0.4–0.6 GB for SmolLM2 360M, 1.6–1.9 GB for Qwen 0.8B, 2.2–2.6 GB for 2B, 3.9–4.7 GB for 4B, and 6.4–7.6 GB for 9B. These are library estimates, not measurements of free memory or guarantees. GPU buffers, compiled kernels, context, browser processes, and the operating system require additional resources. Shared-memory GPUs and mobile tab limits complicate the picture further.
 
-“Light”, “a little more”, and “more capable” describe intended relative positioning. They are not measured quality scores. Performance varies by task, language, hardware, runtime, and quantization. The app makes no best-in-class claim.
+“Quick & light”, “Balanced”, and “More capable” describe intended relative positioning. They are not measured quality scores. Performance varies by task, language, hardware, runtime, and quantization. The app makes no best-in-class claim.
+
+Qwen3.5 2B is the suggested GPU default for chat and documents after practical writing, arithmetic, and grounding spot-checks. Smaller options remain available for tighter hardware limits. See [the exact quality prompts and outputs](TEXT-QUALITY.md).
 
 ## Why not any Hugging Face repository?
 

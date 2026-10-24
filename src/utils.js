@@ -53,6 +53,7 @@ export function wavBlob(samples, sampleRate = 24000) {
 }
 export function friendlyError(error) {
   const s = String(error?.message || error);
+  if (/dynamically imported module|importing a module script|loading chunk/i.test(s)) return 'A tool could not load. Save any open results, then reload this page and try again. The website may have updated or your connection may be offline.';
   if (/password|encrypted/i.test(s)) return 'This document is protected. Export an unprotected copy and try again.';
   if (/context.*(exceed|limit|length)|prompt.*too long/i.test(s)) return 'This conversation is too long for the model. Start a new chat or ask a shorter question.';
   if (/quota|disk|storage/i.test(s)) return 'Your browser ran out of storage. Remove saved models in Downloads, or free up space and try again.';

@@ -7,42 +7,54 @@ import './base.css';
 import './style.css';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
-import { models, findModel, modelTasks, defaultModel, downloadSize } from './catalog.js';
+import { findModel, modelTasks, defaultModel, downloadSize } from './catalog.js';
 import { validateFile, retrieve, recentMessages, toSrt, wavBlob, friendlyError } from './utils.js';
 import { LocalRuntime } from './runtime.js';
 
 const $ = id => document.getElementById(id);
-const runtime = new LocalRuntime(), consented = new Set(), selected = {}, views = {};
-let task = 'chat', busy = false, gpu = false, f16 = false, checked = false, toastTimer, fileEpoch = 0, operation = 0;
+const runtime = new LocalRuntime(), consented = new Set(), selected = {}, views = {}, manualModels = new Set();
+let task = 'chat', activeAssistant = null, busy = false, confirming = false, loaded = false, gpu = false, f16 = false, checked = false, toastTimer, fileEpoch = 0, operation = 0, streamFrame;
 const config = {
-  chat: { title: 'A blank page. A fresh start.', label: "What's on your mind?", placeholder: 'A question, a half-formed idea, a thing you need help with…', action: 'Send message', max: 2000, description: 'Ask, write, and follow an idea wherever it goes.', examples: ['Explain something simply', 'Write a friendly email', 'Help me brainstorm'] },
-  documents: { title: 'Big document. Little questions.', label: 'What would you like to find out?', placeholder: 'Ask about your document…', action: 'Ask document', max: 1000, description: 'Add a readable document, then ask questions. Answers use matching passages, with excerpts to check.', upload: 'Choose a document', accept: '.pdf,.docx,.txt,.md', help: 'PDF, DOCX, TXT or Markdown · up to 15 MB, 100 PDF pages · text-based files', examples: ['Summarize the main points', 'What actions does this suggest?', 'Find the key dates'] },
-  image: { title: 'A picture, from a little idea.', label: 'Describe your picture', placeholder: 'A tiny glass greenhouse on the moon, soft morning light, playful illustration…', action: 'Make an image', max: 450, description: 'Experimental local image generation. A 3.2 GB first download; creating an image can take several minutes.', examples: ['A cozy bookshop in the clouds', 'A little robot tending a garden', 'A paper-cut mountain landscape'] },
-  transcribe: { title: 'From spoken to written.', action: 'Transcribe audio', description: 'Turn an audio file into text and subtitles. Works best with clear speech; review names and numbers.', upload: 'Choose an audio file', accept: '.wav,.mp3,.m4a,.mp4,.webm,.ogg,.flac,.aac', help: 'WAV, MP3, M4A, WebM, OGG, FLAC or AAC · up to 40 MB and 10 minutes', examples: [] },
-  speech: { title: 'Give your words a voice.', label: 'What should we read?', placeholder: 'Paste a passage, write a little story, or hear your next idea aloud…', action: 'Make speech', max: 1200, description: 'Create English speech with one preset voice. Play it here or save a WAV file.', examples: ['Welcome to your next chapter.', 'The little garden woke with the sun.', 'Take a breath. One step at a time.'] },
-  cutout: { title: 'Just you. A clean background.', action: 'Remove background', description: 'Make a transparent cutout of a person. This model is designed for portraits, so use a photo with a clearly visible person.', upload: 'Choose a portrait', accept: '.png,.jpg,.jpeg,.webp', help: 'JPG, PNG or WebP · up to 10 MB and 40 megapixels · resized to at most 1,600 pixels', examples: [] },
+  chat: { name: 'Write & chat', title: 'What’s on your mind?', label: 'Message Freeform', placeholder: 'Ask a question, or start an idea…', action: 'Send message', max: 2000, description: '', examples: ['Explain something simply', 'Write a friendly email', 'Help me brainstorm'] },
+  documents: { name: 'Documents', title: 'Ask your document.', label: 'Ask about your document', placeholder: 'What are the main points?', action: 'Ask document', max: 1000, description: '', upload: 'Choose a document', icon: 'document', accept: '.pdf,.docx,.txt,.md', help: 'PDF, DOCX, TXT, MD · up to 15 MB · 100 PDF pages', examples: [] },
+  image: { name: 'Make an image', title: 'Picture your next idea.', label: 'Describe your picture', placeholder: 'A tiny glass greenhouse on the moon, soft morning light, playful illustration…', action: 'Make image', max: 450, description: 'Experimental. Images can take several minutes.', examples: ['A cozy bookshop in the clouds', 'A little robot tending a garden', 'A paper-cut mountain landscape'] },
+  transcribe: { name: 'Transcribe', title: 'Audio in. Words out.', action: 'Transcribe audio', description: 'Get a transcript and downloadable subtitles.', upload: 'Choose an audio file', icon: 'mic', accept: '.wav,.mp3,.m4a,.mp4,.webm,.ogg,.flac,.aac', help: 'MP3, WAV, M4A and more · up to 40 MB · 10 minutes', examples: [] },
+  speech: { name: 'Read aloud', title: 'Give your words a voice.', label: 'Text to read aloud', placeholder: 'Write or paste something to hear it aloud…', action: 'Make speech', max: 1200, description: 'One English voice. Save it as audio.', examples: [] },
+  cutout: { name: 'Portrait cutout', title: 'You, minus the background.', action: 'Remove background', description: 'Use a photo with a clearly visible person.', upload: 'Choose a portrait', icon: 'cutout', accept: '.png,.jpg,.jpeg,.webp', help: 'JPG, PNG, WebP · up to 10 MB · 40 megapixels', examples: [] },
 };
-function view() { return views[task] ||= { prompt: '', messages: [], file: null, document: null, result: null, sources: [] }; }
+function view() { return views[task] ||= { prompt: '', messages: [], file: null, document: null, preview: null, result: null, sources: [], options: {} }; }
 function text(tag, content, className) { const e = document.createElement(tag); e.textContent = content; if (className) e.className = className; return e; }
 function button(label, action, className = 'quiet') { const e = text('button', label, className); e.type = 'button'; e.addEventListener('click', action); return e; }
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 4500); }
 function showError(error) { $('error').textContent = friendlyError(error); $('error').hidden = false; }
 function status(message, fraction) {
-  $('status').hidden = false; $('status-text').textContent = message;
+  $('status').hidden = false;
+  const compact = /download|fetch|params/i.test(message) ? 'Downloading model files…' : /loading|preparing.*(?:onnx|json|bin|wasm)|saved /i.test(message) ? 'Preparing model…' : message;
+  $('status-text').textContent = compact.length > 100 ? compact.slice(0, 97) + '…' : compact;
   if (Number.isFinite(fraction)) $('progress').value = Math.max(0, Math.min(1, fraction)); else $('progress').removeAttribute('value');
+}
+function refreshAction() {
+  const c = config[task];
+  $('create-button').disabled = busy || confirming || !checked || Boolean(c.label && !$('prompt').value.trim()) || Boolean(c.upload && !view().file);
 }
 function setBusy(value) {
   busy = value;
-  document.querySelectorAll('[data-tool], .pace, .example, #models-button, #new-chat, #file, #remove-file, #unload-button, #create-button, #task-options select, #task-options input').forEach(e => e.disabled = value);
+  document.querySelectorAll('[data-tool], .example, #tool-select, #models-button, #new-chat, #file, #choose-file, #replace-file, #remove-file, #unload-button, #clear-cache, #task-options select').forEach(e => e.disabled = value);
   $('prompt').disabled = value;
   $('workspace').setAttribute('aria-busy', String(value));
   if (!value) $('status').hidden = true;
+  refreshAction();
 }
 const safeMarkdown = value => DOMPurify.sanitize(marked.parse(value, { breaks: true, gfm: true }), {
   ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'pre', 'code', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'del'], ALLOWED_ATTR: [],
 }); // No generated links, images or embedded content: no prompt-driven external requests.
+function updateEmptyState() {
+  const v = view();
+  $('empty-state').hidden = Boolean(v.messages.length || v.result || v.file);
+  $('workbench').classList.toggle('has-content', Boolean(v.messages.length || v.result));
+}
 function renderConversation(scroll = false) {
-  const messages = view().messages, box = $('conversation'); box.replaceChildren();
+  const messages = view().messages, box = $('conversation'), scrollTop = box.scrollTop; box.replaceChildren();
   box.hidden = !messages.length || !['chat', 'documents'].includes(task);
   for (const message of messages) {
     const article = document.createElement('article'); article.className = `message ${message.role}`;
@@ -55,80 +67,99 @@ function renderConversation(scroll = false) {
     box.append(article);
   }
   $('new-chat').hidden = !messages.length;
-  if (scroll) box.scrollTop = box.scrollHeight;
+  updateEmptyState();
+  box.scrollTop = scroll ? box.scrollHeight : scrollTop;
+}
+function renderStream(assistant) {
+  if (streamFrame) return;
+  const currentTask = task;
+  streamFrame = requestAnimationFrame(() => {
+    streamFrame = null;
+    if (currentTask !== task) return;
+    const box = $('conversation'), content = box.lastElementChild?.querySelector('.message-content');
+    const nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 100;
+    if (content) content.innerHTML = safeMarkdown(assistant.content || 'Thinking…');
+    if (nearEnd) box.scrollTop = box.scrollHeight;
+  });
 }
 function renderSources() {
   const box = $('source-excerpts'); box.replaceChildren(); box.hidden = task !== 'documents' || !view().sources.length;
   if (box.hidden) return;
-  box.append(text('h3', 'Passages used for this answer'));
-  box.append(text('p', 'Matched by words in your question. These are excerpts, not a complete review of the document.'));
-  view().sources.forEach((s, i) => { const detail = document.createElement('details'); detail.append(text('summary', `[${i + 1}] ${view().document.name}${s.page ? ` · page ${s.page}` : ` · passage ${s.index + 1}`}`), text('p', s.text)); box.append(detail); });
+  const group = document.createElement('details'); group.append(text('summary', `Check sources (${view().sources.length})`));
+  view().sources.forEach((s, i) => { const detail = document.createElement('details'); detail.append(text('summary', `[${i + 1}] ${view().document.name}${s.page ? ` · page ${s.page}` : ` · passage ${s.index + 1}`}`), text('p', s.text)); group.append(detail); });
+  box.append(group);
 }
+const pace = id => ({ 'smol-cpu': 'Basic · CPU', smol: 'Quick & light', 'qwen-small': 'Light', 'qwen-medium': 'Balanced', 'qwen-large': 'More capable', 'qwen-max': 'Largest', 'whisper-tiny': 'Quick & light', 'whisper-base': 'Balanced', 'whisper-small': 'More capable', flux: 'Experimental', speecht5: 'English voice', modnet: 'For portraits' }[id]);
+const modelName = model => model.name.replace('-Instruct', '');
+function releaseModel() { runtime.unload(); loaded = false; }
 function renderModel() {
-  const model = findModel(selected[task]);
-  $('model-name').textContent = model.name.replaceAll('-', ' ');
-  $('model-tip').textContent = model.description; $('memory-hint').textContent = model.memory;
-  $('model-license').replaceChildren();
-  const link = text('a', `${model.license} · Model card ↗`); link.href = `https://huggingface.co/${model.repo}`; link.target = '_blank'; link.rel = 'noopener noreferrer'; $('model-license').append(link);
-  $('download-size').textContent = `~${downloadSize(model.size)}`;
-  $('download-detail').textContent = model.runtime === 'mlc' ? 'WebGPU required · cached when possible' : model.runtime === 'flux' ? 'WebGPU + browser storage required' : 'Runs on your CPU · cached when possible';
-  const list = $('pace-list'); list.replaceChildren();
-  $('settings-intro').textContent = ['chat', 'documents', 'transcribe'].includes(task) ? 'Start small. Explore as you go.' : 'A specialist, picked for this job.';
-  const choices = task === 'transcribe' ? ['whisper-tiny', 'whisper-base', 'whisper-small'] : ['chat', 'documents'].includes(task) ? [gpu ? 'smol' : 'smol-cpu', gpu ? 'qwen-medium' : 'smol', 'qwen-large'] : [selected[task]];
-  const labels = choices.length > 1 ? ['Light & easy', 'A little more', 'More capable'] : ['Ready for this task'];
-  choices.forEach((id, i) => {
-    const m = findModel(id), b = button('', () => selectModel(id), 'pace'); b.setAttribute('aria-pressed', String(id === selected[task]));
-    const symbol = text('span', ['↗', '✳', '✦'][i], 'pace-symbol'), copy = document.createElement('span'); copy.className = 'pace-copy';
-    copy.append(text('span', labels[i], 'pace-name'), text('span', `~${downloadSize(m.size)} download`, 'pace-sub'));
-    const radio = document.createElement('span'); radio.className = 'radio-dot'; radio.setAttribute('aria-hidden', 'true'); b.append(symbol, copy, radio); list.append(b);
-    if (m.runtime === 'mlc' && !gpu) { b.disabled = true; b.title = 'WebGPU is not available in this browser'; }
-  });
-  if (busy) setBusy(true);
+  const model = findModel(selected[task]), ready = loaded && runtime.model === model.id;
+  $('model-name').textContent = modelName(model);
+  $('model-pace').textContent = pace(model.id);
+  $('models-button').setAttribute('aria-label', `Choose a model. Current: ${modelName(model)}, ${pace(model.id)}`);
+  $('models-button').disabled = busy || !checked;
+  $('download-size').textContent = ready ? 'Ready' : `~${downloadSize(model.size)}`;
+  $('download-detail').textContent = ready ? ' on this device' : consented.has(model.id) ? ' · saved files reused' : ' first download';
+  document.querySelector('.download-note').classList.toggle('is-ready', ready);
 }
 function selectModel(id) {
-  if (busy) return;
-  selected[task] = id; runtime.unload(); renderModel();
-  toast(`${findModel(id).name.replaceAll('-', ' ')} selected. Nothing downloads until you continue.`);
+  if (busy || !modelTasks(task).some(m => m.id === id)) return;
+  if (selected[task] !== id) { selected[task] = id; manualModels.add(task); releaseModel(); renderModel(); }
 }
 function renderFile() {
   const v = view(), file = v.file;
-  $('file-info').hidden = !file; $('file-name').textContent = file ? `${file.name} · ${file.size < 1e6 ? `${Math.max(1, Math.round(file.size / 1000))} KB` : `${(file.size / 1e6).toFixed(1)} MB`}${v.document ? ` · ${v.document.characters.toLocaleString()} readable characters` : ''}` : '';
+  $('file-info').hidden = !file; $('choose-file').hidden = Boolean(file);
+  $('file-name').textContent = file?.name || '';
+  $('file-meta').textContent = file ? `${file.size < 1e6 ? `${Math.max(1, Math.round(file.size / 1000))} KB` : `${(file.size / 1e6).toFixed(1)} MB`}${v.document ? ` · ${v.document.characters.toLocaleString()} readable characters` : ''}` : '';
+  $('file-preview').hidden = !v.preview;
+  if (v.preview) $('file-preview').src = v.preview; else $('file-preview').removeAttribute('src');
+  $('selected-file-icon').toggleAttribute('hidden', Boolean(v.preview));
+  refreshAction();
 }
 function renderOptions() {
   const box = $('task-options'); box.replaceChildren(); box.hidden = !['image', 'transcribe'].includes(task);
   function select(label, id, entries) {
-    const wrap = document.createElement('label'); wrap.textContent = label;
-    const s = document.createElement('select'); s.id = id;
+    const wrap = text('label', label), s = document.createElement('select'); s.id = id;
     entries.forEach(([value, label]) => { const o = text('option', label); o.value = value; s.append(o); });
+    if (view().options[id] !== undefined) s.value = view().options[id];
+    s.addEventListener('change', () => view().options[id] = s.value);
     wrap.append(s); box.append(wrap);
   }
   if (task === 'image') {
-    select('Picture size', 'image-size', [['256', '256 × 256 · smaller'], ['512', '512 × 512 · more detail']]);
-    select('Detail passes', 'image-steps', [['2', '2 passes · quicker'], ['4', '4 passes · more time']]);
-    const note = text('p', 'Use a short, specific prompt in English. The model reads up to 128 tokens; longer prompts may be shortened.'); box.append(note);
+    select('Picture size', 'image-size', [['256', '256 × 256'], ['512', '512 × 512']]);
+    select('Detail', 'image-steps', [['2', 'Quick · 2 passes'], ['4', 'More detail · 4 passes']]);
   } else if (task === 'transcribe') select('Spoken language', 'audio-language', [['', 'Detect language'], ['english', 'English'], ['spanish', 'Spanish'], ['french', 'French'], ['german', 'German'], ['italian', 'Italian'], ['portuguese', 'Portuguese'], ['japanese', 'Japanese'], ['chinese', 'Chinese'], ['korean', 'Korean'], ['arabic', 'Arabic'], ['hindi', 'Hindi'], ['russian', 'Russian']]);
 }
-function switchTool(next) {
-  if (busy) return;
+function switchTool(next, navigate = true) {
+  if (busy || confirming || !Object.hasOwn(config, next)) return;
   view().prompt = $('prompt').value; task = next;
-  if (location.hash !== `#${task}`) history.replaceState(null, '', `#${task}`);
+  if (navigate && location.hash !== `#${task}`) history.pushState(null, '', `#${task}`);
   selected[task] ||= defaultModel(task, gpu);
   const c = config[task];
   document.querySelectorAll('[data-tool]').forEach(e => e.setAttribute('aria-pressed', String(e.dataset.tool === task)));
-  $('tool-title').textContent = c.title; $('tool-description').textContent = c.description;
+  $('tool-select').value = task; $('workspace-name').textContent = c.name; $('workbench').dataset.task = task;
+  $('tool-title').textContent = c.title; $('tool-description').textContent = c.description; $('tool-description').hidden = !c.description;
   $('prompt-shell').hidden = !c.label; $('prompt-label').textContent = c.label || ''; $('prompt').placeholder = c.placeholder || '';
   $('prompt').maxLength = c.max || 2000; $('prompt').value = view().prompt;
+  $('input-hint').textContent = ['chat', 'documents'].includes(task) ? 'Enter to send · Shift + Enter for a new line' : '';
   $('action-label').textContent = c.action;
   $('upload-area').hidden = !c.upload; $('file-label').textContent = c.upload || ''; $('file').accept = c.accept || ''; $('file').value = ''; $('file-help').textContent = c.help || '';
-  $('examples-label').hidden = !c.examples.length; $('examples').replaceChildren();
+  for (const id of ['file-icon', 'selected-file-icon']) $(id).querySelector('use').setAttribute('href', `#i-${c.icon || 'document'}`);
+  $('examples').replaceChildren();
   c.examples.forEach(example => $('examples').append(button(example, () => {
     const prompts = { 'Explain something simply': 'Explain how rainbows form, in simple terms.', 'Write a friendly email': 'Write a short, friendly email to thank a neighbor for watering my plants.', 'Help me brainstorm': 'Give me five creative ideas for a low-cost weekend with friends.' };
     $('prompt').value = prompts[example] || example; updateCount(); $('prompt').focus();
   }, 'example')));
-  $('error').hidden = true; $('accuracy-note').textContent = ['chat', 'documents'].includes(task) ? 'AI can get things wrong. Check anything important. Chats disappear when you reload.' : 'Results stay in this tab. Save anything you want to keep before you leave.';
+  $('error').hidden = true;
+  $('accuracy-note').textContent = ['chat', 'documents'].includes(task) ? 'AI can make mistakes. Chats clear on reload.' : 'Save results before you leave.';
   renderFile(); renderModel(); renderConversation(); renderOptions(); renderResult(); renderSources(); updateCount();
 }
-function updateCount() { $('character-count').textContent = `${$('prompt').value.length.toLocaleString()} / ${$('prompt').maxLength.toLocaleString()}`; }
+function updateCount() {
+  const input = $('prompt'); view().prompt = input.value;
+  $('character-count').textContent = input.value.length ? `${input.value.length.toLocaleString()} / ${input.maxLength.toLocaleString()}` : '';
+  input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 220)}px`;
+  refreshAction();
+}
 async function copy(value) { try { await navigator.clipboard.writeText(value); toast('Copied.'); } catch { toast('Copy is unavailable here. Select the text and copy it manually.'); } }
 function save(blob, name) {
   const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -136,6 +167,7 @@ function save(blob, name) {
 function clearResult(v = view()) { if (v.result?.url) URL.revokeObjectURL(v.result.url); v.result = null; }
 function renderResult() {
   const r = view().result; $('result').hidden = !r; $('result-content').replaceChildren(); $('result-actions').replaceChildren();
+  updateEmptyState();
   if (!r) return;
   $('result-label').textContent = r.title; $('result-note').textContent = r.note || '';
   if (r.blob) {
@@ -151,11 +183,12 @@ function renderResult() {
 }
 async function confirmDownload(model) {
   if (consented.has(model.id)) return true;
-  const box = $('download-confirm-copy'); box.replaceChildren(text('p', `${model.name.replaceAll('-', ' ')} needs about ${downloadSize(model.size)} of downloads, plus a small runtime.`), text('p', model.memory), text('p', model.description));
-  const dialog = $('download-dialog'); dialog.returnValue = '';
+  const box = $('download-confirm-copy'); box.replaceChildren(text('p', `${model.name.replaceAll('-', ' ')} needs about ${downloadSize(model.size)} of downloads, plus a small runtime.`), text('p', model.memory), text('p', model.runtime === 'flux' ? 'Experimental. Allow several minutes per image and at least 4 GB of free browser storage.' : model.description));
+  const dialog = $('download-dialog'); dialog.returnValue = ''; confirming = true; refreshAction();
   const answer = new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'download'), { once: true }));
   dialog.showModal();
-  if (!await answer) return false;
+  const accepted = await answer; confirming = false; refreshAction();
+  if (!accepted) return false;
   consented.add(model.id); return true;
 }
 async function checkDevice() {
@@ -164,11 +197,10 @@ async function checkDevice() {
   } catch { gpu = false; }
   checked = true; $('device-label').textContent = gpu ? 'Graphics ready' : 'CPU tools ready';
   $('device-info').replaceChildren(text('p', gpu ? 'WebGPU is available. Larger text and image models can use your graphics hardware.' : 'WebGPU is unavailable here. The CPU text, transcription, speech, and portrait tools are still available.'), text('p', `Graphics half precision: ${f16 ? 'available' : 'unavailable'}. CPU threads available to this page: ${navigator.hardwareConcurrency || 'unknown'}.`));
-  if (!views.chat?.messages.length) selected.chat = defaultModel('chat', gpu);
-  selected.documents ||= defaultModel('documents', gpu); renderModel();
+  for (const name of ['chat', 'documents']) if (!manualModels.has(name) && !views[name]?.messages.length) selected[name] = defaultModel(name, gpu);
+  renderModel(); refreshAction();
 }
-async function handleFile() {
-  const file = $('file').files[0]; if (!file || busy) return;
+async function handleFile(file = $('file').files[0]) { if (!file || busy) return;
   const v = view(), epoch = ++fileEpoch, op = ++operation;
   $('error').hidden = true; setBusy(true); status('Reading your file locally…');
   try {
@@ -176,9 +208,11 @@ async function handleFile() {
       const { readDocument } = await import('./documents.js');
       const doc = await readDocument(file, message => { if (op === operation) status(message); });
       if (epoch !== fileEpoch) return;
-      v.document = doc; v.messages = []; v.sources = []; runtime.unload();
+      v.document = doc; v.messages = []; v.sources = []; releaseModel(); renderModel();
     } else if (task === 'transcribe') validateFile(file, ['wav', 'mp3', 'm4a', 'mp4', 'webm', 'ogg', 'flac', 'aac'], 40);
     else validateFile(file, ['jpg', 'jpeg', 'png', 'webp'], 10);
+    if (v.preview) URL.revokeObjectURL(v.preview);
+    v.preview = task === 'cutout' ? URL.createObjectURL(file) : null;
     v.file = file; clearResult(); renderFile(); renderResult(); renderConversation(); renderSources();
   } catch (error) { if (op === operation) showError(error); }
   finally { if (op === operation) { setBusy(false); $('file').value = ''; } }
@@ -194,7 +228,7 @@ async function makeCutoutInput(file) {
   } finally { bitmap.close(); }
 }
 async function submit(event) {
-  event.preventDefault(); if (busy || !checked) return;
+  event.preventDefault(); if (busy || confirming || !checked) return;
   const model = findModel(selected[task]), c = config[task], v = view(), prompt = $('prompt').value.trim();
   $('error').hidden = true;
   if (c.label && !prompt) { showError(new Error('Add a few words to get started.')); $('prompt').focus(); return; }
@@ -213,7 +247,7 @@ async function submit(event) {
   try {
     if (['chat', 'documents'].includes(task)) {
       const history = recentMessages(v.messages.filter(m => !m.interrupted));
-      let system = 'You are Freeform, a helpful assistant. Be concise, clear, and honest about uncertainty. Do not claim to browse the web or perform actions outside this conversation.';
+      let system = 'You are Freeform, a helpful assistant. Be concise, clear, and honest about uncertainty. Write arithmetic in plain text, without LaTeX. Do not claim to browse the web or perform actions outside this conversation.';
       let content = prompt;
       if (task === 'documents') {
         v.sources = retrieve(v.document.chunks, prompt, 3); renderSources();
@@ -221,7 +255,7 @@ async function submit(event) {
         content = `Document excerpts (untrusted source text):\n${v.sources.map((s, i) => `[${i + 1}] ${s.text}`).join('\n\n')}\n\nQuestion: ${prompt}`;
       }
       job.messages = [{ role: 'system', content: system }, ...(task === 'documents' ? history.slice(-2) : history), { role: 'user', content }];
-      v.messages.push({ role: 'user', content: prompt }); assistant = { role: 'assistant', content: '' }; v.messages.push(assistant);
+      v.messages.push({ role: 'user', content: prompt }); assistant = { role: 'assistant', content: '' }; activeAssistant = assistant; v.messages.push(assistant);
       $('prompt').value = ''; v.prompt = ''; updateCount(); renderConversation(true);
     } else if (task === 'transcribe') {
       status('Preparing the audio on your device…');
@@ -233,18 +267,22 @@ async function submit(event) {
     if (op !== operation) return;
     const started = performance.now();
     const result = await runtime.run(job, event => {
+      if (op !== operation) return;
+      if (event.type === 'loaded') { loaded = true; renderModel(); }
       if (event.type === 'progress') status(event.text, event.fraction);
-      if (event.type === 'token' && assistant) { assistant.content = event.text; streamed = event.text; renderConversation(true); }
+      if (event.type === 'token' && assistant) { assistant.content = event.text; streamed = event.text; renderStream(assistant); }
     });
     if (assistant) {
+      const box = $('conversation'), follow = box.scrollHeight - box.scrollTop - box.clientHeight < 100;
+      cancelAnimationFrame(streamFrame); streamFrame = null;
       assistant.content = result.text || 'No text was produced. Try a shorter question or another model.';
-      renderConversation(true);
+      renderConversation(follow);
     } else {
       clearResult(); const duration = Math.round((performance.now() - started) / 1000);
-      if (task === 'transcribe') v.result = { title: 'Your words, in writing.', text: result.text || 'No speech detected.', chunks: result.chunks, note: `Whisper · ${duration}s including model preparation. Check the transcript before relying on it.` };
-      else if (task === 'speech') v.result = { title: 'A little voice for your words.', kind: 'audio', blob: wavBlob(result.samples, result.sampleRate), note: `SpeechT5 · English preset voice · ${duration}s including preparation.` };
-      else v.result = { title: task === 'cutout' ? 'A little more you.' : 'An idea, brought to life.', kind: task, blob: result.blob, prompt, note: task === 'image' ? `FLUX.2 Klein · ${job.size} × ${job.size} · ${job.steps} passes · seed ${result.seed} · ${duration}s including preparation. Experimental output.` : 'MODNet · Transparent PNG. Fine hair and difficult edges may need touch-ups.' };
-      renderResult();
+      if (task === 'transcribe') v.result = { title: 'Your transcript', text: result.text || 'No speech detected.', chunks: result.chunks, note: 'Check names and numbers before using the transcript.' };
+      else if (task === 'speech') v.result = { title: 'Your audio', kind: 'audio', blob: wavBlob(result.samples, result.sampleRate), note: 'English · WAV audio' };
+      else v.result = { title: task === 'cutout' ? 'Your cutout' : 'Your image', kind: task, blob: result.blob, prompt, note: task === 'image' ? `${job.size} × ${job.size} · ${duration}s · seed ${result.seed}` : 'Transparent PNG · fine edges may need touch-ups.' };
+      renderResult(); $('result').scrollIntoView({ block: 'nearest' });
     }
   } catch (error) {
     if (op !== operation) return;
@@ -254,14 +292,14 @@ async function submit(event) {
       $('prompt').value = prompt; updateCount(); renderConversation();
     }
     if (error.name === 'AbortError') toast('Stopped. You can try again whenever you like.'); else showError(error);
-  } finally { if (op === operation) setBusy(false); }
+  } finally { if (op === operation) { activeAssistant = null; setBusy(false); renderModel(); } }
 }
 function stop() {
-  fileEpoch++; operation++;
+  fileEpoch++; operation++; cancelAnimationFrame(streamFrame); streamFrame = null;
   const v = view(), last = v.messages.at(-1);
-  if (last?.role === 'assistant' && !last.content) { v.messages.pop(); const question = v.messages.pop(); $('prompt').value = question?.content || ''; updateCount(); }
-  else if (last?.role === 'assistant' && busy) { last.interrupted = true; last.content += '\n\n[Response stopped]'; }
-  runtime.unload(); setBusy(false); renderConversation(); toast('Stopped. Partial model files may still be saved.');
+  if (last === activeAssistant && last && !last.content) { v.messages.pop(); const question = v.messages.pop(); $('prompt').value = question?.content || ''; updateCount(); }
+  else if (last === activeAssistant && last && busy) { last.interrupted = true; last.content += '\n\n[Response stopped]'; }
+  activeAssistant = null; releaseModel(); setBusy(false); renderModel(); renderConversation(); toast('Stopped. Saved files can be reused.');
 }
 async function storageInfo() {
   const box = $('storage-info'); box.replaceChildren();
@@ -279,44 +317,82 @@ async function clearCache() {
   const answer = await new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true }));
   if (answer !== 'clear') return;
   if (busy) { toast('Stop the current task before clearing downloads.'); return; }
-  runtime.unload(); $('clear-cache').disabled = true;
+  releaseModel(); renderModel(); $('clear-cache').disabled = true;
   try {
     for (const name of (await caches.keys()).filter(modelCache)) await caches.delete(name);
     if (navigator.storage?.getDirectory) {
       const root = await navigator.storage.getDirectory();
       try { await root.removeEntry('freeform-images-v1', { recursive: true }); } catch (error) { if (error.name !== 'NotFoundError') throw error; }
     }
-    consented.clear(); $('storage-feedback').textContent = 'Saved models removed. Your browser may take a moment to reclaim space.'; await storageInfo();
+    consented.clear(); renderModel(); $('storage-feedback').textContent = 'Saved models removed. Your browser may take a moment to reclaim space.'; await storageInfo();
   } catch (error) { $('storage-feedback').textContent = `Some files could not be removed. ${friendlyError(error)} You can also clear this site's data in your browser settings.`; }
   finally { $('clear-cache').disabled = false; }
 }
+function openDialog(id) {
+  if (id === 'downloads-dialog') storageInfo();
+  $(id).showModal();
+}
 document.querySelectorAll('[data-tool]').forEach(b => b.addEventListener('click', () => switchTool(b.dataset.tool)));
-document.querySelectorAll('[data-dialog]').forEach(b => b.addEventListener('click', () => { if (b.dataset.dialog === 'downloads-dialog') storageInfo(); $(b.dataset.dialog).showModal(); }));
+$('tool-select').addEventListener('change', e => switchTool(e.target.value));
+document.querySelectorAll('[data-dialog]').forEach(b => b.addEventListener('click', () => { b.closest('dialog')?.close(); openDialog(b.dataset.dialog); }));
 document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => b.closest('dialog').close()));
+document.querySelectorAll('dialog').forEach(d => d.addEventListener('click', e => {
+  if (e.target !== d) return;
+  const r = d.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close();
+}));
 $('models-button').addEventListener('click', () => {
   const list = $('model-options'); list.replaceChildren();
-  for (const model of modelTasks(task)) {
+  const recommended = defaultModel(task, gpu);
+  const choices = modelTasks(task).sort((a, b) => Number(b.id === recommended) - Number(a.id === recommended));
+  for (const model of choices) {
     const row = document.createElement('div'); row.className = 'catalog-row';
     const b = button('', () => { selectModel(model.id); $('models-dialog').close(); }, 'model-option');
-    const copy = document.createElement('span'); copy.append(text('strong', model.name.replaceAll('-', ' ')), text('small', model.description)); b.append(copy, text('span', `~${downloadSize(model.size)}`, 'size'));
-    if (model.runtime === 'mlc' && !gpu) { b.disabled = true; copy.append(text('small', 'WebGPU unavailable in this browser.')); }
+    const heading = document.createElement('span'); heading.className = 'model-option-heading';
+    heading.append(text('strong', pace(model.id)), text('span', `~${downloadSize(model.size)}`, 'size'));
+    const name = text('span', modelName(model), 'model-option-name');
+    if (model.id === defaultModel(task, gpu)) name.append(text('span', 'Suggested', 'suggested'));
+    b.append(heading, name, text('span', model.description, 'model-description'), text('span', model.memory, 'model-memory'));
+    if (['mlc', 'flux'].includes(model.runtime) && !gpu) { b.disabled = true; b.append(text('span', 'Graphics support unavailable in this browser.', 'model-memory')); }
     b.setAttribute('aria-pressed', String(selected[task] === model.id));
-    const link = text('a', `${model.license} · Model card ↗`); link.href = `https://huggingface.co/${model.repo}`; link.target = '_blank'; link.rel = 'noopener noreferrer'; row.append(b, link); list.append(row);
+    const link = text('a', `${model.license} · Model details`); link.href = `https://huggingface.co/${model.repo}`; link.target = '_blank'; link.rel = 'noopener noreferrer'; row.append(b, link); list.append(row);
   }
-  $('models-dialog').showModal();
+  openDialog('models-dialog');
 });
 $('prompt-form').addEventListener('submit', submit);
 $('prompt').addEventListener('input', updateCount);
-$('prompt').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('prompt-form').requestSubmit(); } });
-$('file').addEventListener('change', handleFile);
-$('remove-file').addEventListener('click', () => { const v = view(); v.file = null; v.document = null; v.messages = []; v.sources = []; clearResult(); renderFile(); renderConversation(); renderSources(); renderResult(); });
-$('new-chat').addEventListener('click', () => { view().messages = []; view().sources = []; runtime.unload(); renderConversation(); renderSources(); $('prompt').focus(); });
+$('prompt').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.isComposing && ((!e.shiftKey && ['chat', 'documents'].includes(task)) || e.ctrlKey || e.metaKey)) {
+    e.preventDefault(); if (!$('create-button').disabled) $('prompt-form').requestSubmit();
+  }
+});
+$('file').addEventListener('change', () => handleFile());
+for (const id of ['choose-file', 'replace-file']) $(id).addEventListener('click', () => $('file').click());
+$('upload-area').addEventListener('dragover', e => { e.preventDefault(); if (!busy) $('upload-area').classList.add('drag-over'); });
+$('upload-area').addEventListener('dragleave', e => { if (!$('upload-area').contains(e.relatedTarget)) $('upload-area').classList.remove('drag-over'); });
+$('upload-area').addEventListener('drop', e => {
+  e.preventDefault(); $('upload-area').classList.remove('drag-over');
+  if (busy || confirming) return;
+  if (e.dataTransfer.files.length !== 1) { showError(new Error('Choose one file at a time.')); return; }
+  handleFile(e.dataTransfer.files[0]);
+});
+for (const name of ['dragover', 'drop']) window.addEventListener(name, e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); });
+$('remove-file').addEventListener('click', () => {
+  const v = view(); if (v.preview) URL.revokeObjectURL(v.preview);
+  v.preview = null; v.file = null; v.document = null; v.messages = []; v.sources = []; clearResult();
+  renderFile(); renderConversation(); renderSources(); renderResult(); $('choose-file').focus();
+});
+$('new-chat').addEventListener('click', () => { view().messages = []; view().sources = []; renderConversation(); renderSources(); $('prompt').focus(); });
 $('stop-button').addEventListener('click', stop);
-$('unload-button').addEventListener('click', () => { runtime.unload(); toast('Model memory released. Saved downloads are still available.'); });
+$('unload-button').addEventListener('click', () => { releaseModel(); renderModel(); $('storage-feedback').textContent = 'Working memory released. Downloads are still saved.'; });
 $('clear-cache').addEventListener('click', clearCache);
 $('persist-button').addEventListener('click', async () => {
-  try { const kept = await navigator.storage?.persist?.(); $('storage-feedback').textContent = kept ? 'The browser granted persistent storage. You can still remove it yourself.' : 'The browser did not grant persistent storage. It manages this automatically; try again after using the site for a while.'; }
+  try { const kept = await navigator.storage?.persist?.(); $('storage-feedback').textContent = kept ? 'The browser will keep your downloads until you remove them.' : 'Your browser manages this automatically. It may clear downloads when space is low.'; }
   catch { $('storage-feedback').textContent = 'Persistent storage is unavailable in this browser.'; }
 });
+window.addEventListener('hashchange', () => {
+  if (busy || confirming) { history.replaceState(null, '', `#${task}`); return; }
+  if (Object.hasOwn(config, location.hash.slice(1))) switchTool(location.hash.slice(1), false);
+});
 window.addEventListener('beforeunload', () => runtime.unload());
-selected.chat = 'smol-cpu'; switchTool(Object.hasOwn(config, location.hash.slice(1)) ? location.hash.slice(1) : 'chat'); checkDevice();
+selected.chat = 'smol-cpu'; switchTool(Object.hasOwn(config, location.hash.slice(1)) ? location.hash.slice(1) : 'chat', false); checkDevice();

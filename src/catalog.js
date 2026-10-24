@@ -6,8 +6,8 @@ const mlc = (id, name, size, memory, revision16, revision32, description) => ({
 });
 export const models = [
   { id: 'smol-cpu', name: 'SmolLM2 135M', task: 'text', runtime: 'transformers', repo: 'HuggingFaceTB/SmolLM2-135M-Instruct', revision: '12fd25f77366fa6b3b4b768ec3050bf629380bac', size: 140, memory: 'Allow about 600 MB of RAM', license: 'Apache-2.0', description: 'CPU fallback. Basic English writing; limited reasoning and factual accuracy.' },
-  { id: 'smol', name: 'SmolLM2-360M-Instruct', task: 'text', runtime: 'mlc', repo: 'mlc-ai/SmolLM2-360M-Instruct-q4f16_1-MLC', revision: '3a622fd89e0216e8bb10c410c007c786baa8a033', revision32: '1e6b2ca3684e2bc8a6d39eb36e8d6cd51eb12bda', size: 210, memory: 'About 0.4–0.6 GB GPU memory, plus overhead', license: 'Apache-2.0', description: 'The smallest GPU choice. Quick English drafts and simple questions.' },
-  mlc('qwen-small', 'Qwen3.5-0.8B', 450, 'About 1.6–1.9 GB GPU memory, plus overhead', '0ec138972555613c1d7812a821778ad0398c8790', '4ed017713f04c91ffe55a9dca8c7ac853c41314d', 'Small multilingual assistant. A modest step up from the smallest model.'),
+  { id: 'smol', name: 'SmolLM2-360M-Instruct', task: 'text', runtime: 'mlc', repo: 'mlc-ai/SmolLM2-360M-Instruct-q4f16_1-MLC', revision: '3a622fd89e0216e8bb10c410c007c786baa8a033', revision32: '1e6b2ca3684e2bc8a6d39eb36e8d6cd51eb12bda', size: 210, memory: 'About 0.4–0.6 GB GPU memory, plus overhead', license: 'Apache-2.0', description: 'Smallest GPU download. Basic drafts; weak at reasoning and following instructions.' },
+  mlc('qwen-small', 'Qwen3.5-0.8B', 450, 'About 1.6–1.9 GB GPU memory, plus overhead', '0ec138972555613c1d7812a821778ad0398c8790', '4ed017713f04c91ffe55a9dca8c7ac853c41314d', 'Small multilingual model. Can invent details or miss instructions; try Balanced for better answers.'),
   mlc('qwen-medium', 'Qwen3.5-2B', 1100, 'About 2.2–2.6 GB GPU memory, plus overhead', 'dd74e9c8a20c4546df85c844103bff87b6dcacad', 'd835e5c41aa56174d915e8a3940cde599d3f5a30', 'A useful middle ground for writing, questions, and document excerpts.'),
   mlc('qwen-large', 'Qwen3.5-4B', 2400, 'About 3.9–4.7 GB GPU memory, plus overhead', '44b42469f9e192814bfd90440e3b377d89ba7a13', 'ce39652c7b493d59331e40ef9c7a87de5a47abe3', 'More capable writing and reasoning. Needs a stronger device.'),
   mlc('qwen-max', 'Qwen3.5-9B', 5100, 'About 6.4–7.6 GB GPU memory, plus overhead', 'c7c5d3f5a81e37b8facbb72970940a1b131314a8', 'f8f042bfb68cb88573af4c8e0ef9b1a26bef4ad0', 'The largest text option here. For desktops with plenty of GPU memory.'),
@@ -23,7 +23,7 @@ export const models = [
 export const findModel = id => models.find(m => m.id === id);
 export const modelTasks = task => models.filter(m => m.task === (task === 'documents' || task === 'chat' ? 'text' : task));
 export function defaultModel(task, gpu) {
-  if (task === 'chat') return gpu ? 'smol' : 'smol-cpu';
+  if (task === 'chat') return gpu ? 'qwen-medium' : 'smol-cpu';
   if (task === 'documents') return gpu ? 'qwen-medium' : 'smol-cpu';
   return { image: 'flux', transcribe: 'whisper-tiny', speech: 'speecht5', cutout: 'modnet' }[task];
 }
